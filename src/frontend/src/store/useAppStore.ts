@@ -68,6 +68,23 @@ function monthRange(start: string, end: string): string[] {
   return months;
 }
 
+/**
+ * Returns the first month a due should be generated for a student.
+ * Logic: The tuition starts in startMonth. The first full month completes
+ * one month later. So the first due is always startMonth + 1.
+ * Example: started Feb 2026 → first due is Mar 2026 (due on dueDay of Mar).
+ */
+function firstDueMonth(startMonth: string): string {
+  const [y, m] = startMonth.split("-").map(Number);
+  let firstYear = y;
+  let firstMonth = m + 1;
+  if (firstMonth > 12) {
+    firstMonth = 1;
+    firstYear++;
+  }
+  return `${firstYear}-${String(firstMonth).padStart(2, "0")}`;
+}
+
 /** Build a due date string, capping at last day of month */
 function buildDueDate(month: string, dueDay: number): string {
   const [y, m] = month.split("-").map(Number);
@@ -153,7 +170,12 @@ export const useAppStore = create<AppStore>()(
 
       addStudent: (data) => {
         const student: Student = { ...data, id: genId(), advanceBalance: 0 };
-        const months = monthRange(data.startMonth, currentMonth());
+        // First due starts after the first full month completes, not from startMonth itself
+        const firstMonth = firstDueMonth(data.startMonth);
+        const curMonth = currentMonth();
+        // Only generate dues if firstMonth <= currentMonth
+        const months =
+          firstMonth <= curMonth ? monthRange(firstMonth, curMonth) : [];
         const newDues: MonthlyDue[] = months.map((month) => ({
           id: `d-${student.id}-${month}`,
           studentId: student.id,
@@ -272,6 +294,9 @@ export const useAppStore = create<AppStore>()(
 
         for (const student of students) {
           if (student.status !== "Active") continue;
+          // Only generate dues for months at or after the first due month
+          const fDueMonth = firstDueMonth(student.startMonth);
+          if (curMonth < fDueMonth) continue;
           const hasDue = dues.some(
             (d) => d.studentId === student.id && d.month === curMonth,
           );
