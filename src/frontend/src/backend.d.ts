@@ -1,23 +1,12 @@
-import type { ActorMethod } from "@dfinity/agent";
-import type { Principal } from "@dfinity/principal";
-
+import type { Principal } from "@icp-sdk/core/principal";
+export interface Some<T> {
+    __kind__: "Some";
+    value: T;
+}
+export interface None {
+    __kind__: "None";
+}
+export type Option<T> = Some<T> | None;
 export interface backendInterface {
-  ping: ActorMethod<[], string>;
+    ping(): Promise<string>;
 }
-
-export type CreateActorOptions = {
-  agentOptions?: Record<string, unknown>;
-};
-
-export declare class ExternalBlob {
-  getBytes(): Promise<Uint8Array>;
-  onProgress?: (progress: number) => void;
-  static fromURL(url: string): ExternalBlob;
-}
-
-export declare function createActor(
-  canisterId: string,
-  uploadFile: (file: ExternalBlob) => Promise<Uint8Array>,
-  downloadFile: (bytes: Uint8Array) => Promise<ExternalBlob>,
-  options?: CreateActorOptions,
-): backendInterface;

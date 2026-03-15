@@ -2,39 +2,41 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 // ── Types ──────────────────────────────────────────────────────
-export type StudentStatus = "Active" | "Paused" | "Left";
-export type DueStatus = "Unpaid" | "Partial" | "Paid";
-export type PaymentMode = "Cash" | "UPI" | "Bank";
-
-export interface Student {
+export interface Tuition {
   id: string;
   name: string;
-  subject: string;
+  students: string[];
   monthlyFee: number;
-  dueDay: number;
-  startMonth: string; // YYYY-MM
-  status: StudentStatus;
-  parentContact: string;
-  advanceBalance: number;
+  startDate: string; // ISO date YYYY-MM-DD
+  isActive: boolean;
 }
 
 export interface MonthlyDue {
   id: string;
-  studentId: string;
-  month: string; // YYYY-MM
-  dueDate: string; // YYYY-MM-DD
-  expectedFee: number;
-  paidAmount: number;
-  status: DueStatus;
+  tuitionId: string;
+  month: number; // 1–12
+  year: number;
+  amount: number;
+  isPaid: boolean;
+  paidDate?: string;
 }
 
 export interface Payment {
   id: string;
-  studentId: string;
-  paymentDate: string; // YYYY-MM-DD
-  amountPaid: number;
-  paymentMode: PaymentMode;
-  notes: string;
+  tuitionId: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  note?: string;
+  allocatedMonths: string[]; // MonthlyDue ids
+}
+
+export type AttendanceStatus = "present" | "absent" | "holiday";
+
+export interface AttendanceRecord {
+  id: string;
+  studentId: string; // `${tuitionId}__${studentName}`
+  date: string; // YYYY-MM-DD
+  status: AttendanceStatus;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -42,322 +44,316 @@ function genId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function formatMonth(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+/** Extract YYYY-MM from startDate, then return the month AFTER */
+export function firstDueYearMonth(startDate: string): {
+  year: number;
+  month: number;
+} {
+  const d = new Date(startDate);
+  let year = d.getFullYear();
+  let month = d.getMonth() + 2; // 0-indexed +1 for 1-indexed +1 for next month
+  if (month > 12) {
+    month = 1;
+    year++;
+  }
+  return { year, month };
 }
 
-function currentMonth(): string {
-  return formatMonth(new Date());
+export function todayYearMonth(): { year: number; month: number } {
+  const d = new Date();
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }
 
-/** Returns all YYYY-MM strings from start (inclusive) to end (inclusive) */
-function monthRange(start: string, end: string): string[] {
-  const months: string[] = [];
-  const [sy, sm] = start.split("-").map(Number);
-  const [ey, em] = end.split("-").map(Number);
-  let y = sy;
-  let m = sm;
-  while (y < ey || (y === ey && m <= em)) {
-    months.push(`${y}-${String(m).padStart(2, "0")}`);
-    m++;
-    if (m > 12) {
-      m = 1;
-      y++;
+export function compareYearMonth(
+  a: { year: number; month: number },
+  b: { year: number; month: number },
+): number {
+  if (a.year !== b.year) return a.year - b.year;
+  return a.month - b.month;
+}
+
+function monthsInRange(
+  from: { year: number; month: number },
+  to: { year: number; month: number },
+): { year: number; month: number }[] {
+  const result: { year: number; month: number }[] = [];
+  let { year, month } = from;
+  while (compareYearMonth({ year, month }, to) <= 0) {
+    result.push({ year, month });
+    month++;
+    if (month > 12) {
+      month = 1;
+      year++;
     }
   }
-  return months;
+  return result;
 }
 
-/**
- * Returns the first month a due should be generated for a student.
- * Logic: The tuition starts in startMonth. The first full month completes
- * one month later. So the first due is always startMonth + 1.
- * Example: started Feb 2026 → first due is Mar 2026 (due on dueDay of Mar).
- */
-function firstDueMonth(startMonth: string): string {
-  const [y, m] = startMonth.split("-").map(Number);
-  let firstYear = y;
-  let firstMonth = m + 1;
-  if (firstMonth > 12) {
-    firstMonth = 1;
-    firstYear++;
+function makeDueId(tuitionId: string, year: number, month: number): string {
+  return `due-${tuitionId}-${year}-${String(month).padStart(2, "0")}`;
+}
+
+function generateDuesForTuition(tuition: Tuition): MonthlyDue[] {
+  const from = firstDueYearMonth(tuition.startDate);
+  const to = todayYearMonth();
+  if (compareYearMonth(from, to) > 0) return [];
+  return monthsInRange(from, to).map(({ year, month }) => ({
+    id: makeDueId(tuition.id, year, month),
+    tuitionId: tuition.id,
+    month,
+    year,
+    amount: tuition.monthlyFee,
+    isPaid: false,
+  }));
+}
+
+function allocatePayments(
+  tuitionId: string,
+  allDues: MonthlyDue[],
+  allPayments: Payment[],
+): { updatedDues: MonthlyDue[]; updatedPayments: Payment[] } {
+  const updatedDues = allDues.map((d) =>
+    d.tuitionId === tuitionId
+      ? { ...d, isPaid: false, paidDate: undefined }
+      : { ...d },
+  );
+
+  const tuitionPayments = allPayments
+    .filter((p) => p.tuitionId === tuitionId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const updatedPayments = allPayments.map((p) => ({
+    ...p,
+    allocatedMonths: [...p.allocatedMonths],
+  }));
+
+  const remainingByPayment = new Map<string, number>();
+  for (const p of tuitionPayments) remainingByPayment.set(p.id, p.amount);
+
+  const tuitionDues = updatedDues
+    .filter((d) => d.tuitionId === tuitionId)
+    .sort((a, b) => compareYearMonth(a, b));
+
+  for (const p of updatedPayments) {
+    if (p.tuitionId === tuitionId) p.allocatedMonths = [];
   }
-  return `${firstYear}-${String(firstMonth).padStart(2, "0")}`;
-}
 
-/** Build a due date string, capping at last day of month */
-function buildDueDate(month: string, dueDay: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const day = Math.min(dueDay, lastDay);
-  return `${month}-${String(day).padStart(2, "0")}`;
+  for (const due of tuitionDues) {
+    for (const payment of tuitionPayments) {
+      const rem = remainingByPayment.get(payment.id) ?? 0;
+      if (rem <= 0) continue;
+      const dueRef = updatedDues.find((d) => d.id === due.id);
+      if (!dueRef || dueRef.isPaid) continue;
+
+      remainingByPayment.set(payment.id, rem - due.amount);
+      dueRef.isPaid = true;
+      dueRef.paidDate = payment.date;
+
+      const pRef = updatedPayments.find((p) => p.id === payment.id);
+      if (pRef) pRef.allocatedMonths.push(due.id);
+      break;
+    }
+  }
+
+  return { updatedDues, updatedPayments };
 }
 
 // ── Store ──────────────────────────────────────────────────────
 interface AppStore {
-  students: Student[];
+  tuitions: Tuition[];
   dues: MonthlyDue[];
   payments: Payment[];
+  attendance: AttendanceRecord[];
 
-  addStudent: (data: Omit<Student, "id" | "advanceBalance">) => void;
-  updateStudent: (id: string, data: Partial<Omit<Student, "id">>) => void;
-  deleteStudent: (id: string) => void;
-  addPayment: (data: Omit<Payment, "id">) => void;
-  editPayment: (id: string, data: Omit<Payment, "id">) => void;
+  addTuition: (data: Omit<Tuition, "id">) => void;
+  updateTuition: (id: string, data: Omit<Tuition, "id">) => void;
+  deleteTuition: (id: string) => void;
+  addPayment: (data: Omit<Payment, "id" | "allocatedMonths">) => void;
+  updatePayment: (
+    id: string,
+    data: Omit<Payment, "id" | "allocatedMonths">,
+  ) => void;
   deletePayment: (id: string) => void;
   generateMissingDues: () => void;
+  markAttendance: (
+    studentId: string,
+    date: string,
+    status: AttendanceStatus | null,
+  ) => void;
 }
 
-/** Recalculate all dues for a student from scratch based on their payments */
-function recalculateDues(
-  studentId: string,
-  students: Student[],
-  dues: MonthlyDue[],
-  payments: Payment[],
-): { updatedDues: MonthlyDue[]; updatedStudents: Student[] } {
-  const updatedDues = dues.map((d) =>
-    d.studentId === studentId
-      ? { ...d, paidAmount: 0, status: "Unpaid" as DueStatus }
-      : { ...d },
-  );
-  const updatedStudents = students.map((s) => ({ ...s }));
-  const updatedStudent = updatedStudents.find((s) => s.id === studentId)!;
-  if (!updatedStudent) return { updatedDues, updatedStudents };
-
-  updatedStudent.advanceBalance = 0;
-
-  // Replay all payments for this student in chronological order
-  const studentPayments = payments
-    .filter((p) => p.studentId === studentId)
-    .sort((a, b) => a.paymentDate.localeCompare(b.paymentDate));
-
-  for (const payment of studentPayments) {
-    const studentDues = updatedDues
-      .filter((d) => d.studentId === studentId && d.status !== "Paid")
-      .sort((a, b) => a.month.localeCompare(b.month));
-
-    let remaining = payment.amountPaid + updatedStudent.advanceBalance;
-    updatedStudent.advanceBalance = 0;
-
-    for (const due of studentDues) {
-      if (remaining <= 0) break;
-      const dueRef = updatedDues.find((d) => d.id === due.id)!;
-      const needed = dueRef.expectedFee - dueRef.paidAmount;
-      if (remaining >= needed) {
-        dueRef.paidAmount += needed;
-        dueRef.status = "Paid";
-        remaining -= needed;
-      } else {
-        dueRef.paidAmount += remaining;
-        dueRef.status = "Partial";
-        remaining = 0;
-      }
-    }
-
-    updatedStudent.advanceBalance = remaining;
-  }
-
-  return { updatedDues, updatedStudents };
-}
-
-// ── Zustand store ──────────────────────────────────────────────
 export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({
-      students: [],
+      tuitions: [],
       dues: [],
       payments: [],
+      attendance: [],
 
-      addStudent: (data) => {
-        const student: Student = { ...data, id: genId(), advanceBalance: 0 };
-        // First due starts after the first full month completes, not from startMonth itself
-        const firstMonth = firstDueMonth(data.startMonth);
-        const curMonth = currentMonth();
-        // Only generate dues if firstMonth <= currentMonth
-        const months =
-          firstMonth <= curMonth ? monthRange(firstMonth, curMonth) : [];
-        const newDues: MonthlyDue[] = months.map((month) => ({
-          id: `d-${student.id}-${month}`,
-          studentId: student.id,
-          month,
-          dueDate: buildDueDate(month, data.dueDay),
-          expectedFee: data.monthlyFee,
-          paidAmount: 0,
-          status: "Unpaid" as DueStatus,
-        }));
+      addTuition: (data) => {
+        const tuition: Tuition = { ...data, id: genId() };
+        const newDues = generateDuesForTuition(tuition);
         set((state) => ({
-          students: [...state.students, student],
+          tuitions: [...state.tuitions, tuition],
           dues: [...state.dues, ...newDues],
         }));
       },
 
-      updateStudent: (id, data) => {
+      updateTuition: (id, data) => {
+        const { dues, payments } = get();
+        const tuition: Tuition = { ...data, id };
+        const otherDues = dues.filter((d) => d.tuitionId !== id);
+        const freshDues = generateDuesForTuition(tuition);
+        const allDues = [...otherDues, ...freshDues];
+        const { updatedDues, updatedPayments } = allocatePayments(
+          id,
+          allDues,
+          payments,
+        );
         set((state) => ({
-          students: state.students.map((s) =>
-            s.id === id ? { ...s, ...data } : s,
+          tuitions: state.tuitions.map((t) => (t.id === id ? tuition : t)),
+          dues: updatedDues,
+          payments: updatedPayments,
+        }));
+      },
+
+      deleteTuition: (id) => {
+        set((state) => ({
+          tuitions: state.tuitions.filter((t) => t.id !== id),
+          dues: state.dues.filter((d) => d.tuitionId !== id),
+          payments: state.payments.filter((p) => p.tuitionId !== id),
+          attendance: state.attendance.filter(
+            (a) => !a.studentId.startsWith(`${id}__`),
           ),
         }));
       },
 
-      deleteStudent: (id) => {
-        set((state) => ({
-          students: state.students.filter((s) => s.id !== id),
-          dues: state.dues.filter((d) => d.studentId !== id),
-          payments: state.payments.filter((p) => p.studentId !== id),
-        }));
-      },
-
       addPayment: (data) => {
-        const payment: Payment = { ...data, id: genId() };
-        const { students, dues } = get();
-
-        const student = students.find((s) => s.id === data.studentId);
-        if (!student) return;
-
-        // Clone to mutate
-        const updatedDues = dues.map((d) => ({ ...d }));
-        const updatedStudents = students.map((s) => ({ ...s }));
-
-        const updatedStudent = updatedStudents.find(
-          (s) => s.id === data.studentId,
-        )!;
-        const studentDues = updatedDues
-          .filter((d) => d.studentId === data.studentId && d.status !== "Paid")
-          .sort((a, b) => a.month.localeCompare(b.month));
-
-        let remaining = data.amountPaid + updatedStudent.advanceBalance;
-
-        for (const due of studentDues) {
-          if (remaining <= 0) break;
-          const dueRef = updatedDues.find((d) => d.id === due.id)!;
-          const needed = dueRef.expectedFee - dueRef.paidAmount;
-          if (remaining >= needed) {
-            dueRef.paidAmount += needed;
-            dueRef.status = "Paid";
-            remaining -= needed;
-          } else {
-            dueRef.paidAmount += remaining;
-            dueRef.status = "Partial";
-            remaining = 0;
-          }
-        }
-
-        updatedStudent.advanceBalance = remaining;
-
-        set({
-          payments: [...get().payments, payment],
-          dues: updatedDues,
-          students: updatedStudents,
-        });
+        const payment: Payment = { ...data, id: genId(), allocatedMonths: [] };
+        const { dues, payments } = get();
+        const allPayments = [...payments, payment];
+        const { updatedDues, updatedPayments } = allocatePayments(
+          data.tuitionId,
+          dues,
+          allPayments,
+        );
+        set({ dues: updatedDues, payments: updatedPayments });
       },
 
-      editPayment: (id, data) => {
-        const { students, dues, payments } = get();
+      updatePayment: (id, data) => {
+        const { dues, payments } = get();
         const updatedPayments = payments.map((p) =>
-          p.id === id ? { ...data, id } : p,
+          p.id === id ? { ...data, id, allocatedMonths: [] } : p,
         );
-        const { updatedDues, updatedStudents } = recalculateDues(
-          data.studentId,
-          students,
-          dues,
-          updatedPayments,
-        );
-        set({
-          payments: updatedPayments,
-          dues: updatedDues,
-          students: updatedStudents,
-        });
+        const { updatedDues, updatedPayments: finalPayments } =
+          allocatePayments(data.tuitionId, dues, updatedPayments);
+        set({ dues: updatedDues, payments: finalPayments });
       },
 
       deletePayment: (id) => {
-        const { students, dues, payments } = get();
+        const { dues, payments } = get();
         const payment = payments.find((p) => p.id === id);
         if (!payment) return;
         const updatedPayments = payments.filter((p) => p.id !== id);
-        const { updatedDues, updatedStudents } = recalculateDues(
-          payment.studentId,
-          students,
-          dues,
-          updatedPayments,
-        );
-        set({
-          payments: updatedPayments,
-          dues: updatedDues,
-          students: updatedStudents,
-        });
+        const { updatedDues, updatedPayments: finalPayments } =
+          allocatePayments(payment.tuitionId, dues, updatedPayments);
+        set({ dues: updatedDues, payments: finalPayments });
       },
 
       generateMissingDues: () => {
-        const { students, dues } = get();
-        const curMonth = currentMonth();
+        const { tuitions, dues } = get();
+        const today = todayYearMonth();
         const newDues: MonthlyDue[] = [];
-
-        for (const student of students) {
-          if (student.status !== "Active") continue;
-          // Only generate dues for months at or after the first due month
-          const fDueMonth = firstDueMonth(student.startMonth);
-          if (curMonth < fDueMonth) continue;
-          const hasDue = dues.some(
-            (d) => d.studentId === student.id && d.month === curMonth,
-          );
-          if (!hasDue) {
+        for (const tuition of tuitions) {
+          if (!tuition.isActive) continue;
+          const from = firstDueYearMonth(tuition.startDate);
+          if (compareYearMonth(from, today) > 0) continue;
+          const dueId = makeDueId(tuition.id, today.year, today.month);
+          if (!dues.some((d) => d.id === dueId)) {
             newDues.push({
-              id: `d-${student.id}-${curMonth}`,
-              studentId: student.id,
-              month: curMonth,
-              dueDate: buildDueDate(curMonth, student.dueDay),
-              expectedFee: student.monthlyFee,
-              paidAmount: 0,
-              status: "Unpaid",
+              id: dueId,
+              tuitionId: tuition.id,
+              month: today.month,
+              year: today.year,
+              amount: tuition.monthlyFee,
+              isPaid: false,
             });
           }
         }
-
         if (newDues.length > 0) {
           set((state) => ({ dues: [...state.dues, ...newDues] }));
         }
       },
+
+      markAttendance: (studentId, date, status) => {
+        set((state) => {
+          if (status === null) {
+            return {
+              attendance: state.attendance.filter(
+                (a) => !(a.studentId === studentId && a.date === date),
+              ),
+            };
+          }
+          const existing = state.attendance.find(
+            (a) => a.studentId === studentId && a.date === date,
+          );
+          if (existing) {
+            return {
+              attendance: state.attendance.map((a) =>
+                a.studentId === studentId && a.date === date
+                  ? { ...a, status }
+                  : a,
+              ),
+            };
+          }
+          return {
+            attendance: [
+              ...state.attendance,
+              { id: genId(), studentId, date, status },
+            ],
+          };
+        });
+      },
     }),
-    {
-      name: "tuition-tracker-store",
-      version: 2,
-    },
+    { name: "eduleger-v1", version: 1 },
   ),
 );
 
-// ── Selectors (utility functions) ─────────────────────────────
-export function isOverdue(due: MonthlyDue): boolean {
-  if (due.status === "Paid") return false;
-  const today = new Date().toISOString().split("T")[0];
-  return due.dueDate < today;
-}
-
-/** Due date is today or in the future, and not yet paid */
-export function isUpcoming(due: MonthlyDue): boolean {
-  if (due.status === "Paid") return false;
-  const today = new Date().toISOString().split("T")[0];
-  return due.dueDate >= today;
-}
-
-/** Amount that is actually overdue (past due date, not paid) */
-export function pendingOverdueAmount(due: MonthlyDue): number {
-  if (due.status === "Paid" || isUpcoming(due)) return 0;
-  return due.expectedFee - due.paidAmount;
-}
-
-export function daysOverdue(due: MonthlyDue): number {
-  if (!isOverdue(due)) return 0;
-  const today = new Date();
-  const dueD = new Date(due.dueDate);
-  return Math.floor((today.getTime() - dueD.getTime()) / (1000 * 60 * 60 * 24));
-}
-
+// ── Selectors ──────────────────────────────────────────────────
 export function formatCurrency(amount: number): string {
   return `₹${amount.toLocaleString("en-IN")}`;
 }
 
-export function formatMonthDisplay(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 1, 1);
-  return d.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+export function formatMonthLabel(year: number, month: number): string {
+  return new Date(year, month - 1, 1).toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function getDuePendingAmount(
+  tuitionId: string,
+  dues: MonthlyDue[],
+): number {
+  const today = todayYearMonth();
+  return dues
+    .filter(
+      (d) =>
+        d.tuitionId === tuitionId &&
+        !d.isPaid &&
+        compareYearMonth(d, today) <= 0,
+    )
+    .reduce((sum, d) => sum + d.amount, 0);
+}
+
+export function getOverdueCount(tuitionId: string, dues: MonthlyDue[]): number {
+  const today = todayYearMonth();
+  return dues.filter(
+    (d) =>
+      d.tuitionId === tuitionId && !d.isPaid && compareYearMonth(d, today) < 0,
+  ).length;
+}
+
+export function makeStudentKey(tuitionId: string, studentName: string): string {
+  return `${tuitionId}__${studentName}`;
 }
