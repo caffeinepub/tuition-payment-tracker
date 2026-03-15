@@ -9,6 +9,7 @@ export interface Tuition {
   monthlyFee: number;
   startDate: string; // ISO date YYYY-MM-DD
   isActive: boolean;
+  phone?: string;
 }
 
 export interface MonthlyDue {

@@ -5,18 +5,34 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  compareYearMonth,
   formatCurrency,
+  formatMonthLabel,
   getDuePendingAmount,
   getOverdueCount,
+  todayYearMonth,
   useAppStore,
 } from "@/store/useAppStore";
 import type { Tuition } from "@/store/useAppStore";
-import { ChevronRight, Pencil, Plus, Trash2, Users } from "lucide-react";
+import {
+  ChevronRight,
+  MessageCircle,
+  Pencil,
+  Plus,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 interface Props {
   navigate: (s: Screen) => void;
+}
+
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
 }
 
 export default function Tuitions({ navigate }: Props) {
@@ -33,6 +49,42 @@ export default function Tuitions({ navigate }: Props) {
     deleteTuition(deleteId);
     setDeleteId(null);
     toast.success("Tuition deleted");
+  }
+
+  function handleWhatsApp(t: Tuition) {
+    const today = todayYearMonth();
+    const tuitionDues = dues.filter((d) => d.tuitionId === t.id);
+    const pending = getDuePendingAmount(t.id, dues);
+    const overdueDues = tuitionDues.filter(
+      (d) => !d.isPaid && compareYearMonth(d, today) < 0,
+    );
+    const currentMonthName = new Date().toLocaleString("en-IN", {
+      month: "long",
+      year: "numeric",
+    });
+    const overdueMonthsText =
+      overdueDues.length > 0
+        ? overdueDues
+            .slice()
+            .sort((a, b) => compareYearMonth(a, b))
+            .map((d) => formatMonthLabel(d.year, d.month))
+            .join(", ")
+        : currentMonthName;
+
+    const msg = `Hello, this is a reminder from EduLedger.
+
+Student: ${t.students.join(", ")}
+Pending Fees: ₹${pending}
+Month: ${overdueMonthsText}
+
+Please pay the fees at your convenience.
+Thank you.`;
+
+    const encodedMsg = encodeURIComponent(msg);
+    const url = t.phone
+      ? `https://wa.me/${formatPhone(t.phone)}?text=${encodedMsg}`
+      : `https://wa.me/?text=${encodedMsg}`;
+    window.open(url, "_blank");
   }
 
   return (
@@ -140,6 +192,15 @@ export default function Tuitions({ navigate }: Props) {
                       </p>
                     </button>
                     <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-green-600 hover:text-green-700"
+                        data-ocid={`students.tuition.whatsapp_button.${idx + 1}`}
+                        onClick={() => handleWhatsApp(t)}
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

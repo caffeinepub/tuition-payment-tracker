@@ -6,6 +6,12 @@ import TuitionForm from "@/components/TuitionForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import {
   compareYearMonth,
@@ -15,13 +21,27 @@ import {
   todayYearMonth,
   useAppStore,
 } from "@/store/useAppStore";
-import { ArrowLeft, FileDown, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Copy,
+  FileDown,
+  MessageCircle,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface Props {
   tuitionId: string;
   navigate: (s: Screen) => void;
+}
+
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
 }
 
 export default function TuitionDetail({ tuitionId, navigate }: Props) {
@@ -39,6 +59,7 @@ export default function TuitionDetail({ tuitionId, navigate }: Props) {
     string | null
   >(null);
   const [showReport, setShowReport] = useState(false);
+  const [showWhatsApp, setShowWhatsApp] = useState(false);
 
   const tuition = tuitions.find((t) => t.id === tuitionId);
   const today = todayYearMonth();
@@ -71,6 +92,45 @@ export default function TuitionDetail({ tuitionId, navigate }: Props) {
   }
 
   const pending = getDuePendingAmount(tuitionId, dues);
+
+  const overdueDues = tuitionDues.filter(
+    (d) => !d.isPaid && compareYearMonth(d, today) < 0,
+  );
+
+  const currentMonthName = new Date().toLocaleString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+  const overdueMonthsText =
+    overdueDues.length > 0
+      ? overdueDues
+          .slice()
+          .reverse()
+          .map((d) => formatMonthLabel(d.year, d.month))
+          .join(", ")
+      : currentMonthName;
+
+  const whatsappMessage = `Hello, this is a reminder from EduLedger.
+
+Student: ${tuition.students.join(", ")}
+Pending Fees: ₹${pending}
+Month: ${overdueMonthsText}
+
+Please pay the fees at your convenience.
+Thank you.`;
+
+  function handleOpenWhatsApp() {
+    const encodedMsg = encodeURIComponent(whatsappMessage);
+    const url = tuition?.phone
+      ? `https://wa.me/${formatPhone(tuition.phone)}?text=${encodedMsg}`
+      : `https://wa.me/?text=${encodedMsg}`;
+    window.open(url, "_blank");
+  }
+
+  function handleCopyMessage() {
+    navigator.clipboard.writeText(whatsappMessage);
+    toast.success("Message copied!");
+  }
 
   function getDueStatus(d: (typeof tuitionDues)[0]) {
     if (d.isPaid) return "paid";
@@ -116,6 +176,15 @@ export default function TuitionDetail({ tuitionId, navigate }: Props) {
             {tuition.students.join(", ")}
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          data-ocid="detail.whatsapp.button"
+          className="text-green-600 hover:text-green-700"
+          onClick={() => setShowWhatsApp(true)}
+        >
+          <MessageCircle className="w-4 h-4" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -370,6 +439,45 @@ export default function TuitionDetail({ tuitionId, navigate }: Props) {
         onConfirm={handleDeletePayment}
         onCancel={() => setConfirmDeletePayment(null)}
       />
+
+      {/* WhatsApp Reminder Dialog */}
+      <Dialog open={showWhatsApp} onOpenChange={setShowWhatsApp}>
+        <DialogContent data-ocid="whatsapp.dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-5 h-5 text-green-600" />
+              WhatsApp Reminder
+            </DialogTitle>
+          </DialogHeader>
+          <div className="bg-muted rounded-lg p-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+            {whatsappMessage}
+          </div>
+          {!tuition.phone && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+              No phone number saved. Add one via Edit to send directly.
+            </p>
+          )}
+          <div className="flex gap-2 pt-1">
+            <Button
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+              data-ocid="whatsapp.open_modal_button"
+              onClick={handleOpenWhatsApp}
+            >
+              <MessageCircle className="w-4 h-4 mr-2" />
+              Send WhatsApp Reminder
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              data-ocid="whatsapp.copy.button"
+              onClick={handleCopyMessage}
+            >
+              <Copy className="w-4 h-4 mr-2" />
+              Copy
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

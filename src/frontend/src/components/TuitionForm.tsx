@@ -39,6 +39,7 @@ export default function TuitionForm({ open, tuition, onClose }: Props) {
   const [monthlyFee, setMonthlyFee] = useState("");
   const [startDate, setStartDate] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -52,12 +53,14 @@ export default function TuitionForm({ open, tuition, onClose }: Props) {
         setMonthlyFee(String(tuition.monthlyFee));
         setStartDate(tuition.startDate);
         setIsActive(tuition.isActive);
+        setPhone(tuition.phone ?? "");
       } else {
         setName("");
         setStudents([makeEntry()]);
         setMonthlyFee("");
         setStartDate(new Date().toISOString().split("T")[0]);
         setIsActive(true);
+        setPhone("");
       }
     }
   }, [open, tuition]);
@@ -90,6 +93,7 @@ export default function TuitionForm({ open, tuition, onClose }: Props) {
       monthlyFee: fee,
       startDate,
       isActive,
+      phone: phone.trim(),
     };
 
     if (tuition) {
@@ -184,6 +188,21 @@ export default function TuitionForm({ open, tuition, onClose }: Props) {
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="whatsapp-phone">Parent's WhatsApp Number</Label>
+            <Input
+              id="whatsapp-phone"
+              type="tel"
+              data-ocid="tuition.phone.input"
+              placeholder="e.g. 9876543210"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Used for sending fee reminders
+            </p>
           </div>
 
           <div className="flex items-center justify-between">

@@ -13,7 +13,7 @@ import {
   makeStudentKey,
   useAppStore,
 } from "@/store/useAppStore";
-import { ChevronLeft, ChevronRight, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Printer, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 interface Props {
@@ -233,6 +233,15 @@ export default function MonthlyReportModal({
               >
                 <Printer className="w-3 h-3" />
                 Print / PDF
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="no-print h-7 w-7"
+                data-ocid="report.close_button"
+                onClick={onClose}
+              >
+                <X className="w-4 h-4" />
               </Button>
             </div>
           </div>
