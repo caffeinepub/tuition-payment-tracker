@@ -20,6 +20,7 @@ export interface MonthlyDue {
   amount: number;
   isPaid: boolean;
   paidDate?: string;
+  partialPaid?: number; // amount paid so far when not fully covered
 }
 
 export interface Payment {
@@ -113,9 +114,10 @@ function allocatePayments(
   allDues: MonthlyDue[],
   allPayments: Payment[],
 ): { updatedDues: MonthlyDue[]; updatedPayments: Payment[] } {
+  // Reset all dues and payments for this tuition
   const updatedDues = allDues.map((d) =>
     d.tuitionId === tuitionId
-      ? { ...d, isPaid: false, paidDate: undefined }
+      ? { ...d, isPaid: false, paidDate: undefined, partialPaid: undefined }
       : { ...d },
   );
 
@@ -125,34 +127,54 @@ function allocatePayments(
 
   const updatedPayments = allPayments.map((p) => ({
     ...p,
-    allocatedMonths: [...p.allocatedMonths],
+    allocatedMonths: p.tuitionId === tuitionId ? [] : [...p.allocatedMonths],
   }));
 
-  const remainingByPayment = new Map<string, number>();
-  for (const p of tuitionPayments) remainingByPayment.set(p.id, p.amount);
+  // Track remaining balance per payment
+  const remaining = new Map<string, number>();
+  for (const p of tuitionPayments) remaining.set(p.id, p.amount);
 
   const tuitionDues = updatedDues
     .filter((d) => d.tuitionId === tuitionId)
     .sort((a, b) => compareYearMonth(a, b));
 
-  for (const p of updatedPayments) {
-    if (p.tuitionId === tuitionId) p.allocatedMonths = [];
-  }
+  // For each due (oldest first), fill from payments (oldest first)
+  for (const dueSnapshot of tuitionDues) {
+    const dueRef = updatedDues.find((d) => d.id === dueSnapshot.id)!;
+    let stillNeeded = dueRef.amount;
 
-  for (const due of tuitionDues) {
     for (const payment of tuitionPayments) {
-      const rem = remainingByPayment.get(payment.id) ?? 0;
+      if (stillNeeded <= 0) break;
+      const rem = remaining.get(payment.id) ?? 0;
       if (rem <= 0) continue;
-      const dueRef = updatedDues.find((d) => d.id === due.id);
-      if (!dueRef || dueRef.isPaid) continue;
 
-      remainingByPayment.set(payment.id, rem - due.amount);
+      const apply = Math.min(rem, stillNeeded);
+      remaining.set(payment.id, rem - apply);
+      stillNeeded -= apply;
+
+      // Track which dues this payment contributed to
+      const pRef = updatedPayments.find((p) => p.id === payment.id)!;
+      if (!pRef.allocatedMonths.includes(dueRef.id)) {
+        pRef.allocatedMonths.push(dueRef.id);
+      }
+    }
+
+    if (stillNeeded === 0) {
+      // Fully paid
       dueRef.isPaid = true;
-      dueRef.paidDate = payment.date;
-
-      const pRef = updatedPayments.find((p) => p.id === payment.id);
-      if (pRef) pRef.allocatedMonths.push(due.id);
-      break;
+      dueRef.partialPaid = undefined;
+      // Use the date of the last contributing payment
+      const contributors = tuitionPayments.filter((p) =>
+        updatedPayments
+          .find((up) => up.id === p.id)
+          ?.allocatedMonths.includes(dueRef.id),
+      );
+      dueRef.paidDate = contributors[contributors.length - 1]?.date;
+    } else {
+      // Partially paid
+      const amountPaid = dueRef.amount - stillNeeded;
+      dueRef.partialPaid = amountPaid > 0 ? amountPaid : undefined;
+      dueRef.isPaid = false;
     }
   }
 
@@ -344,7 +366,7 @@ export function getDuePendingAmount(
         !d.isPaid &&
         compareYearMonth(d, today) <= 0,
     )
-    .reduce((sum, d) => sum + d.amount, 0);
+    .reduce((sum, d) => sum + (d.amount - (d.partialPaid ?? 0)), 0);
 }
 
 export function getOverdueCount(tuitionId: string, dues: MonthlyDue[]): number {

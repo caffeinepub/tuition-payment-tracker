@@ -134,6 +134,7 @@ Thank you.`;
 
   function getDueStatus(d: (typeof tuitionDues)[0]) {
     if (d.isPaid) return "paid";
+    if (d.partialPaid && d.partialPaid > 0) return "partial";
     if (compareYearMonth(d, today) < 0) return "overdue";
     if (compareYearMonth(d, today) === 0) return "current";
     return "upcoming";
@@ -257,6 +258,7 @@ Thank you.`;
           ) : (
             tuitionDues.map((d, idx) => {
               const status = getDueStatus(d);
+              const remaining = d.amount - (d.partialPaid ?? 0);
               return (
                 <div
                   key={d.id}
@@ -270,6 +272,11 @@ Thank you.`;
                     {status === "paid" && (
                       <Badge className="bg-success/15 text-success border-success/30 text-[10px] px-1.5">
                         Paid
+                      </Badge>
+                    )}
+                    {status === "partial" && (
+                      <Badge className="bg-amber-500/15 text-amber-700 border-amber-400/30 text-[10px] px-1.5">
+                        Partial
                       </Badge>
                     )}
                     {status === "overdue" && (
@@ -291,17 +298,31 @@ Thank you.`;
                       </Badge>
                     )}
                   </div>
-                  <span
-                    className={`text-sm font-medium ${
-                      status === "paid"
-                        ? "text-success"
-                        : status === "overdue"
-                          ? "text-destructive"
-                          : "text-foreground"
-                    }`}
-                  >
-                    {formatCurrency(d.amount)}
-                  </span>
+                  <div className="text-right">
+                    {status === "partial" ? (
+                      <>
+                        <span className="text-sm font-medium text-amber-700">
+                          {formatCurrency(remaining)} remaining
+                        </span>
+                        <p className="text-[10px] text-muted-foreground">
+                          {formatCurrency(d.partialPaid ?? 0)} of{" "}
+                          {formatCurrency(d.amount)} paid
+                        </p>
+                      </>
+                    ) : (
+                      <span
+                        className={`text-sm font-medium ${
+                          status === "paid"
+                            ? "text-success"
+                            : status === "overdue"
+                              ? "text-destructive"
+                              : "text-foreground"
+                        }`}
+                      >
+                        {formatCurrency(d.amount)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })
@@ -365,7 +386,13 @@ Thank you.`;
                         <p className="text-[11px] text-muted-foreground mt-0.5">
                           Covers:{" "}
                           {allocatedDues
-                            .map((d) => d && formatMonthLabel(d.year, d.month))
+                            .map((d) => {
+                              if (!d) return "";
+                              const label = formatMonthLabel(d.year, d.month);
+                              const isPartial =
+                                !d.isPaid && d.partialPaid && d.partialPaid > 0;
+                              return isPartial ? `${label} (partial)` : label;
+                            })
                             .join(", ")}
                         </p>
                       )}

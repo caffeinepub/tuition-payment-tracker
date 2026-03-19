@@ -113,7 +113,7 @@
 
 @layer utilities {
   .bottom-nav-safe {
-    padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
   }
   .nav-height {
     height: calc(4rem + env(safe-area-inset-bottom));

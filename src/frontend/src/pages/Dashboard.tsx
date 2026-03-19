@@ -110,7 +110,7 @@ export default function Dashboard({ navigate }: Props) {
   );
 
   return (
-    <div className="px-4 pt-6 pb-4 space-y-6 max-w-lg mx-auto">
+    <div className="px-4 pt-6 pb-28 space-y-6 max-w-lg mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

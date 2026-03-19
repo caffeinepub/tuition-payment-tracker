@@ -55,7 +55,7 @@ export default function Payments({ navigate: _navigate }: Props) {
     : null;
 
   return (
-    <div className="px-4 pt-6 pb-4 space-y-4 max-w-lg mx-auto">
+    <div className="px-4 pt-6 pb-24 space-y-4 max-w-lg mx-auto">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold font-display text-foreground">
           Payments
