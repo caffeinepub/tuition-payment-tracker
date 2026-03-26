@@ -46,18 +46,14 @@ function genId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-/** Extract YYYY-MM from startDate, then return the month AFTER */
+/** Extract YYYY-MM from startDate; the start month itself is the first due */
 export function firstDueYearMonth(startDate: string): {
   year: number;
   month: number;
 } {
   const d = new Date(startDate);
-  let year = d.getFullYear();
-  let month = d.getMonth() + 2; // 0-indexed +1 for 1-indexed +1 for next month
-  if (month > 12) {
-    month = 1;
-    year++;
-  }
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1; // 0-indexed +1 for 1-indexed (start month is first due)
   return { year, month };
 }
 
@@ -364,7 +360,7 @@ export function getDuePendingAmount(
       (d) =>
         d.tuitionId === tuitionId &&
         !d.isPaid &&
-        compareYearMonth(d, today) <= 0,
+        compareYearMonth(d, today) < 0,
     )
     .reduce((sum, d) => sum + (d.amount - (d.partialPaid ?? 0)), 0);
 }

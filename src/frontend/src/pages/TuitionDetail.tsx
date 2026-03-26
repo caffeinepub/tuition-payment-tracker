@@ -136,7 +136,7 @@ Thank you.`;
     if (d.isPaid) return "paid";
     if (d.partialPaid && d.partialPaid > 0) return "partial";
     if (compareYearMonth(d, today) < 0) return "overdue";
-    if (compareYearMonth(d, today) === 0) return "current";
+    // Current month and future months are both "upcoming" — the month hasn't ended yet
     return "upcoming";
   }
 
@@ -285,11 +285,6 @@ Thank you.`;
                         className="text-[10px] px-1.5"
                       >
                         Overdue
-                      </Badge>
-                    )}
-                    {status === "current" && (
-                      <Badge className="bg-warning/20 text-warning-foreground border-warning/30 text-[10px] px-1.5">
-                        Due
                       </Badge>
                     )}
                     {status === "upcoming" && (
